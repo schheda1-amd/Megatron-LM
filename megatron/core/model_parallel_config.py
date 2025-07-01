@@ -16,6 +16,9 @@ class ModelParallelConfig:
     ###################
     # Model parallelism
     ###################
+    xcd_model_parallel_size: int = 1
+    """Intra-device model parallelism. Split tensors across XCDs."""
+
     tensor_model_parallel_size: int = 1
     """Intra-layer model parallelism. Splits tensors across GPU ranks."""
 

@@ -291,6 +291,8 @@ def _initialize_distributed(get_embedding_ranks, get_position_embedding_ranks):
             'rank': args.rank,
             'timeout': timedelta(minutes=args.distributed_timeout_minutes),
         }
+        os.environ['MASTER_ADDR'] = os.getenv('SLURM_LAUNCH_NODE_IPADDR')
+        os.environ['MASTER_PORT'] = '29500'
 
         torch.distributed.init_process_group(**init_process_group_kwargs)
 
@@ -301,6 +303,7 @@ def _initialize_distributed(get_embedding_ranks, get_position_embedding_ranks):
             print("model parallel is already initialized")
         else:
             mpu.initialize_model_parallel(
+                args.xcd_model_parallel_size,
                 args.tensor_model_parallel_size,
                 args.pipeline_model_parallel_size,
                 args.virtual_pipeline_model_parallel_size,
