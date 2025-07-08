@@ -13,11 +13,6 @@ import torch
 
 from .utils import GlobalMemoryBuffer
 
-
-# Intra-device model parallel group the current rank belongs to
-_XCD_MODEL_PARALLEL_GROUP = None
-# Create additional XP+{_}P parallel groups as required  
-
 # Intra-layer model parallel group that the current rank belongs to.
 _TENSOR_MODEL_PARALLEL_GROUP = None
 # Inter-layer model parallel group that the current rank belongs to.
@@ -80,10 +75,6 @@ _EMBEDDING_GLOBAL_RANKS = None
 
 # A list of ranks that have a copy of the position embedding.
 _POSITION_EMBEDDING_GLOBAL_RANKS = None
-
-# A list of global ranks for each xcd group to ease calculation of first 
-# local rank in xcd model parallel group
-_XCD_MODEL_PARALLEL_GLOBAL_RANKS = None
 
 # A list of global ranks for each pipeline group to ease calculation of the source
 # rank when broadcasting from the first or last pipeline stage.
@@ -172,21 +163,14 @@ def generate_masked_orthogonal_rank_groups(
             generated group is the `pp` group.
 
     Algorithm:
-        ### AMD opt. - integrate xp <-> xcd_parallel to represent xcd/parallel
-        ### no changes to following source code if we start with xp.
-        ### xp defaults to 1 (spx), 2, 4, 8... for *px partition modes.
-        
-        For orthogonal parallelism, such as xp/tp/dp/pp/cp, the global_rank and
+        For orthogonal parallelism, such as tp/dp/pp/cp, the global_rank and
         local_rank satisfy the following equation:
-            global_rank = xp_rank + tp_rank * xp_size 
-                            + dp_rank * xp_size * tp_size 
-                            + pp_rank * xp_size * tp_size * dp_size (1)
-                xp_rank \in [0, xp_size)
+            global_rank = tp_rank + dp_rank * tp_size + pp_rank * tp_size * dp_size (1)
                 tp_rank \in [0, tp_size)
                 dp_rank \in [0, dp_size)
                 pp_rank \in [0, pp_size)
 
-        If we want to get the `dp_group` (xp_size * tp_size * pp_size groups of dp_size ranks each.
+        If we want to get the `dp_group` (tp_size * pp_size groups of dp_size ranks each.
         For example,  if the gpu size is 8 and order is 'tp-pp-dp', size is '2-2-2', and the
         dp_group here is [[0, 4], [1, 5], [2, 6], [3, 7]].)
         The tp_rank and pp_rank will be combined to form the `dp_group_index`.
@@ -305,24 +289,22 @@ class RankGenerator(object):
     """A class for generating rank groups for different modes of parallelism."""
 
     def __init__(
-        self, xp: int, tp: int, ep: int, dp: int, pp: int, cp: int, order: str, rank_offset: int = 0
+        self, tp: int, ep: int, dp: int, pp: int, cp: int, order: str, rank_offset: int = 0
     ) -> None:
         assert (
             ep == 1 or cp == 1
         ), "Both EP and CP > 1 in not allow in one rank generator. \
             CP is only included in default RankGenerator, and EP only in expert RankGenerator."
 
-        self.xp = xp
         self.tp = tp
         self.ep = ep
         self.dp = dp
         self.pp = pp
         self.cp = cp
         self.rank_offset = rank_offset
-        self.world_size = xp * tp * dp * pp * cp * ep
+        self.world_size = tp * dp * pp * cp * ep
 
         self.name_to_size = {
-            "xp": self.xp,
             "tp": self.tp,
             "pp": self.pp,
             "dp": self.dp,
@@ -406,7 +388,6 @@ def default_position_embedding_ranks(pp_ranks, split_rank=None):
 
 
 def initialize_model_parallel(
-    xcd_model_parallel_size: int = 1,
     tensor_model_parallel_size: int = 1,
     pipeline_model_parallel_size: int = 1,
     virtual_pipeline_model_parallel_size: Optional[int] = None,
@@ -419,7 +400,7 @@ def initialize_model_parallel(
     expert_tensor_parallel_size: Optional[int] = None,
     nccl_communicator_config_path: Optional[str] = None,
     distributed_timeout_minutes: int = 30,
-    order: str = "xp-tp-cp-ep-dp-pp",
+    order: str = "tp-cp-ep-dp-pp",
     encoder_tensor_model_parallel_size: int = 0,
     encoder_pipeline_model_parallel_size: Optional[int] = 0,
     get_embedding_ranks: Optional[Callable[[List[int], Optional[int]], List[int]]] = None,
@@ -429,10 +410,6 @@ def initialize_model_parallel(
     """Initialize model data parallel groups.
 
     Args:
-        xcd_model_parallel_size (int, default = 1):
-            The number of logical compute partitions of 1 
-            physical GPU. Optimized for AMD Instinct systems. 
-
         tensor_model_parallel_size (int, default = 1):
             The number of GPUs to split individual tensors across.
 
@@ -520,12 +497,9 @@ def initialize_model_parallel(
             https://pytorch.org/docs/stable/distributed.html for
             caveats.
 
-        order (str, default=xp-tp-dp-pp):
+        order (str, default=tp-dp-pp):
             The rank initialization order of parallelism. Now we support
-            xp-tp-dp-pp and xp-tp-pp-dp orders. 
-            N.B. for AMD Instinct devices, order string should start with "xp-.."
-            To ensure that intra-GPU tensor parallelism is local to the same 
-            physical GPU.
+            tp-dp-pp and tp-pp-dp orders.
 
         encoder_tensor_model_parallel_size (int, default = 0):
             The number of GPUs to split individual tensors across in the encoder. If 0,
@@ -565,7 +539,6 @@ def initialize_model_parallel(
     if encoder_pipeline_model_parallel_size is None:
         encoder_pipeline_model_parallel_size = 0
 
-    # TODO: Support xcd parallelism in encoder state too
     if encoder_tensor_model_parallel_size == 0 and encoder_pipeline_model_parallel_size > 0:
         encoder_tensor_model_parallel_size = tensor_model_parallel_size
 
@@ -598,8 +571,7 @@ def initialize_model_parallel(
         * context_parallel_size
     )
     decoder_model_size = (
-        xcd_model_parallel_size * tensor_model_parallel_size * \
-            pipeline_model_parallel_size * context_parallel_size
+        tensor_model_parallel_size * pipeline_model_parallel_size * context_parallel_size
     )
     total_model_size = encoder_model_size + decoder_model_size
 
@@ -646,7 +618,6 @@ def initialize_model_parallel(
 
     if encoder_world_size > 0:
         encoder_rank_generator = RankGenerator(
-            xp=1,
             tp=encoder_tensor_model_parallel_size,
             ep=1,
             dp=data_parallel_size,
@@ -659,7 +630,6 @@ def initialize_model_parallel(
         encoder_rank_generator = None
 
     decoder_rank_generator = RankGenerator(
-        xp=xcd_model_parallel_size,
         tp=tensor_model_parallel_size,
         ep=1,
         dp=data_parallel_size,
@@ -683,7 +653,6 @@ def initialize_model_parallel(
 
     # TODO: support expert specific ordering
     expert_decoder_rank_generator = RankGenerator(
-        xp=1,
         tp=expert_tensor_parallel_size,
         ep=expert_model_parallel_size,
         dp=expert_data_parallel_size,
@@ -700,7 +669,7 @@ def initialize_model_parallel(
 
     def generator_wrapper(group_type, is_expert=False, **kwargs):
         """The `RankGenerator` class produces a hyper-rectangle for a given set of
-        xcd, tensor, pipeline, data, expert and context parallelism. If we have an encoder,
+        tensor, pipeline, data, expert, and context parallelism. If we have an encoder,
         in addition to the default decoder, we essentially instantiate two `RankGenerator`
         classes to construct the parallelism for each module separately, and we then have
         to stitch them together for the right groups. For now, this means pp and tp-pp."""
@@ -871,24 +840,7 @@ def initialize_model_parallel(
         if rank in ranks:
             _MODEL_PARALLEL_GROUP = group
             _MODEL_PARALLEL_GLOBAL_RANKS = ranks
-    
-    # Build the xcd model parallel group
-    # TODO: Add explicit check to see if partition modes are enabled.
-    # raise runtime error otherwise 
-    global _XCD_MODEL_PARALLEL_GROUP
-    global _XCD_MODEL_PARALLEL_GLOBAL_RANKS
-    assert(
-        _XCD_MODEL_PARALLEL_GROUP is None
-    ), 'xcd model parallel group is initialized'
-    for ranks in generator_wrapper('xp'):
-        group = torch.distributed.new_group(
-            ranks, timeout=timeout, pg_options=get_nccl_options('xp', nccl_comm_cfgs)
-        )
-        if rank in ranks:
-            _XCD_MODEL_PARALLEL_GROUP = group
-            _XCD_MODEL_PARALLEL_GLOBAL_RANKS = ranks
-    
-    
+
     # Build the tensor model-parallel groups.
     global _TENSOR_MODEL_PARALLEL_GROUP
     global _TENSOR_MODEL_PARALLEL_GLOBAL_RANKS
@@ -1062,21 +1014,6 @@ def is_unitialized() -> bool:
     """
     warnings.warn("is_unitialized is deprecated, use is_initialized instead", DeprecationWarning)
     return not is_initialized()
-
-
-def xcd_model_parallel_is_initialized():
-    """Checks if xcd-parallel state is initialized"""
-    if (
-        _XCD_MODEL_PARALLEL_GROUP is None
-    ):
-        return False
-    return True
-
-
-def get_xcd_model_parallel_group():
-    """Get this group for intra-node collective ops"""
-    assert _XCD_MODEL_PARALLEL_GROUP is not None, 'xcd model parallel group not initialized'
-    return _XCD_MODEL_PARALLEL_GROUP
 
 
 def model_parallel_is_initialized():
@@ -1258,14 +1195,6 @@ def set_virtual_pipeline_model_parallel_world_size(world_size):
     _VIRTUAL_PIPELINE_MODEL_PARALLEL_WORLD_SIZE = world_size
 
 
-def get_xcd_model_parallel_world_size():
-    """Return world size for the xcd-model-parallel group"""
-    global _XCD_MODEL_PARALLEL_WORLD_SIZE
-    if _XCD_MODEL_PARALLEL_WORLD_SIZE is not None:
-        return _XCD_MODEL_PARALLEL_WORLD_SIZE
-    return torch.distributed.get_world_size(group=get_xcd_model_parallel_group())
-
-
 def get_tensor_model_parallel_world_size():
     """Return world size for the tensor-model-parallel group."""
     global _MPU_TENSOR_MODEL_PARALLEL_WORLD_SIZE
@@ -1292,12 +1221,6 @@ def get_pipeline_model_parallel_world_size():
         return torch.distributed.get_world_size(group=pp_group)
 
 
-def set_xcd_model_parallel_rank(rank):
-    """"Set xcd-model-parallel rank."""
-    global _XCD_MODEL_PARALLEL_RANK
-    _XCD_MODEL_PARALLEL_RANK = rank
-
-
 def set_tensor_model_parallel_rank(rank):
     """Set tensor-model-parallel rank."""
     global _MPU_TENSOR_MODEL_PARALLEL_RANK
@@ -1314,14 +1237,6 @@ def set_pipeline_model_parallel_split_rank(rank):
     """Set pipeline-model-parallel split rank. DEPRECATED."""
     global _PIPELINE_MODEL_PARALLEL_SPLIT_RANK
     _PIPELINE_MODEL_PARALLEL_SPLIT_RANK = rank
-
-
-def get_xcd_model_parallel_rank():
-    """"Return caller's current xcd-model-parallel local rank"""
-    global _XCD_MODEL_PARALLEL_RANK
-    if _XCD_MODEL_PARALLEL_RANK is not None:
-        return _XCD_MODEL_PARALLEL_RANK
-    return torch.distributed.get_rank(group=get_xcd_model_parallel_group())
 
 
 def get_tensor_model_parallel_rank():
@@ -1507,15 +1422,6 @@ def get_virtual_pipeline_model_parallel_world_size():
     """Return the virtual pipeline-parallel world size."""
     global _VIRTUAL_PIPELINE_MODEL_PARALLEL_WORLD_SIZE
     return _VIRTUAL_PIPELINE_MODEL_PARALLEL_WORLD_SIZE
-
-
-def get_xcd_model_parallel_src_rank():
-    """Calculate the global rank corresponding to the first local rank
-    in the xcd model parallel group."""
-    assert (
-        _XCD_MODEL_PARALLEL_GLOBAL_RANKS is not None
-    ), "XCD model parallel group is not initialized."
-    return _XCD_MODEL_PARALLEL_GLOBAL_RANKS[0]
 
 
 def get_tensor_model_parallel_src_rank():
@@ -1850,10 +1756,9 @@ def destroy_global_memory_buffer():
 
 
 def get_all_ranks():
-    """Get caller's rank in xcd-model-parallel, tensor-model-parallel, data-parallel, 
-    context-parallel, pipeline-model-parallel and expert-model-parallel groups."""
+    """Get caller's rank in tensor-model-parallel, data-parallel, context-parallel,
+    pipeline-model-parallel and expert-model-parallel groups."""
     ranks = [
-        get_xcd_model_parallel_rank(),
         get_tensor_model_parallel_rank(),
         get_data_parallel_rank(),
         get_context_parallel_rank(),
@@ -1873,9 +1778,6 @@ def destroy_model_parallel():
     """Set the groups to none."""
     global _MODEL_PARALLEL_GROUP
     _MODEL_PARALLEL_GROUP = None
-
-    global _XCD_MODEL_PARALLEL_GROUP
-    _XCD_MODEL_PARALLEL_GROUP = None
 
     global _TENSOR_MODEL_PARALLEL_GROUP
     _TENSOR_MODEL_PARALLEL_GROUP = None

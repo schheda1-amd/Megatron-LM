@@ -90,14 +90,8 @@ def parse_args(extra_args_provider=None, ignore_unknown_args=False):
 
 
     # Args from environment
-    #args.rank = int(os.getenv('RANK', '0'))
-    #args.world_size = int(os.getenv("WORLD_SIZE", '1'))
-    
-    # slurm friendly g-rank <> l-rank settings to make life easy
-    # SLURM_NTASKS = #nodes * #gpus (physical) * #gpu-partitions
-    args.rank = int(os.getenv('SLURM_PROCID', '0'))
-    args.world_size = int(os.getenv('SLURM_NTASKS', '0'))
-    args.local_rank = int(os.getenv('SLURM_LOCALID', '0'))
+    args.rank = int(os.getenv('RANK', '0'))
+    args.world_size = int(os.getenv("WORLD_SIZE", '1'))
 
     return args
 
@@ -1741,10 +1735,6 @@ def _add_mixed_precision_args(parser):
 def _add_distributed_args(parser):
     group = parser.add_argument_group(title='distributed')
 
-    group.add_argument('--xcd-model-parallel-size', type=int, default=1,
-                       help='The xcd-model parallel group size.'
-                       'Set to the number of compute partitions create with `amd-smi`.'
-                       'assumes all GPUs on all nodes are in a similar partition configuration')
     group.add_argument('--tensor-model-parallel-size', type=int, default=1,
                        help='Degree of tensor model parallelism.')
     group.add_argument('--encoder-tensor-model-parallel-size', type=int, default=0,
