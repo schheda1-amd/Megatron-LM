@@ -19,6 +19,9 @@ class ModelParallelConfig:
     tensor_model_parallel_size: int = 1
     """Intra-layer model parallelism. Splits tensors across GPU ranks."""
 
+    xcd_model_parallel_size: int = 1
+    """Intra-device model parallelism. Define number of equal sized PEs in each GPU"""
+
     pipeline_model_parallel_size: int = 1
     """Inter-layer model parallelism. Splits transformer layers across GPU ranks."""
 
@@ -341,6 +344,22 @@ class ModelParallelConfig:
         if self.sequence_parallel:
             if self.tensor_model_parallel_size <= 1:
                 raise ValueError("Can not use sequence paralllelism without tensor parallelism")
+
+        if self.xcd_model_parallel_size > self.tensor_model_parallel_size:
+            raise ValueError("Number of XCD partitions cannot exceed TP partitions.")
+
+        if self.xcd_model_parallel_size > 1:
+            # Disabling multiple || strategies for now.
+            # Theoretically, SP, CP, PP can be supported by making necessary changes anything.
+            if (
+                self.sequence_parallel or 
+                self.context_parallel_size > 1 or 
+                self.pipeline_model_parallel_size > 1
+                ):
+                raise ValueError(
+                    "Intra-gpu parallelism is currently only supported with tensor parallelism."
+                )
+            
 
         if self.expert_tensor_parallel_size is None:
             self.expert_tensor_parallel_size = self.tensor_model_parallel_size

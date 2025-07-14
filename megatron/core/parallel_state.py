@@ -13,6 +13,10 @@ import torch
 
 from .utils import GlobalMemoryBuffer
 
+# Intra-gpu model parallel group the current rank belongs to. 
+_XCD_INTRA_GPU_PARALLEL_GROUP = None
+# Inter-gpu model parallel group the current rank belongs to.
+_XCD_INTER_GPU_PARALLEL_GROUP = None
 # Intra-layer model parallel group that the current rank belongs to.
 _TENSOR_MODEL_PARALLEL_GROUP = None
 # Inter-layer model parallel group that the current rank belongs to.
@@ -69,6 +73,8 @@ _MPU_DATA_PARALLEL_WORLD_SIZE = None
 _MPU_DATA_PARALLEL_RANK = None
 _MPU_TENSOR_MODEL_PARALLEL_RANK = None
 _MPU_PIPELINE_MODEL_PARALLEL_RANK = None
+_XCD_INTRA_GPU_PARALLEL_RANK = None
+_XCD_INTER_GPU_PARALLEL_RANK = None
 
 # A list of ranks that have a copy of the embedding.
 _EMBEDDING_GLOBAL_RANKS = None
@@ -83,6 +89,14 @@ _PIPELINE_GLOBAL_RANKS = None
 # A list of global ranks for each data parallel group to ease calculation of the source
 # rank when broadcasting weights from src to all other data parallel ranks
 _DATA_PARALLEL_GLOBAL_RANKS = None
+
+# A list of global ranks for each **intra-gpu xcd model parallel group to ease calculation of
+# the first local rank in the xcd model parallel group
+_XCD_INTRA_GPU_PARALLEL_GLOBAL_RANKS = None
+
+# A list of global ranks for each **inter-gpu xcd model parallel group to ease calculation of 
+# the first local rank in this group.
+_XCD_INTER_GPU_PARALLEL_GLOBAL_RANKS = None
 
 # A list of global ranks for each tensor model parallel group to ease calculation of
 # the first local rank in the tensor model parallel group
@@ -388,6 +402,7 @@ def default_position_embedding_ranks(pp_ranks, split_rank=None):
 
 
 def initialize_model_parallel(
+    xcd_model_parallel_size: int = 1,
     tensor_model_parallel_size: int = 1,
     pipeline_model_parallel_size: int = 1,
     virtual_pipeline_model_parallel_size: Optional[int] = None,
@@ -410,6 +425,9 @@ def initialize_model_parallel(
     """Initialize model data parallel groups.
 
     Args:
+        xcd_model_parallel_size (int, default = 1):
+            The number of logical partitions of a GPU.
+        
         tensor_model_parallel_size (int, default = 1):
             The number of GPUs to split individual tensors across.
 
@@ -855,6 +873,54 @@ def initialize_model_parallel(
             _TENSOR_MODEL_PARALLEL_GROUP = group
             _TENSOR_MODEL_PARALLEL_GLOBAL_RANKS = ranks
 
+    # Build the intra gpu xcd model-parallel groups.
+    global _XCD_INTRA_GPU_PARALLEL_GROUP
+    global _XCD_INTRA_GPU_PARALLEL_GLOBAL_RANKS
+    assert(
+        _XCD_INTRA_GPU_PARALLEL_GROUP is None
+    ), 'xcd model parallel group is already initialized'
+
+    physical_gpu_limit = tensor_model_parallel_size // xcd_model_parallel_size    
+    
+    # piggy back on whole tp group = #physical-gpu * #partitions
+    for ranks in generator_wrapper('tp'):
+        for i in range(physical_gpu_limit):
+            xcd_offset = i*xcd_model_parallel_size
+            xcd_ranks = ranks[xcd_offset : xcd_offset + xcd_model_parallel_size]
+            group = torch.distributed.new_group(
+                xcd_ranks, timeout=timeout, pg_options=get_nccl_options('tp', nccl_comm_cfgs)
+            )
+            if rank in xcd_ranks:
+                _XCD_INTRA_GPU_PARALLEL_GROUP = group
+                _XCD_INTRA_GPU_PARALLEL_GLOBAL_RANKS = xcd_ranks
+
+
+    # Build the inter gpu xcd model-parallel groups.
+    # This brings together similar indexed XCDs of all physical GPUs into 1 group
+    # For AR after RPL.
+    global _XCD_INTER_GPU_PARALLEL_GROUP
+    global _XCD_INTER_GPU_PARALLEL_GLOBAL_RANKS
+    assert(
+        _XCD_INTER_GPU_PARALLEL_GROUP is None
+    ), 'inter-gpu xcd model parallel group is already initialized'
+
+    # piggy back on whole tp group
+    for ranks in generator_wrapper('tp'):
+        #physical_gpu_limit = tensor_model_parallel_size // xcd_model_parallel_size
+        for i in range(physical_gpu_limit):
+            xcd_offset = i * xcd_model_parallel_size
+            strided_ranks = ranks[xcd_offset::xcd_model_parallel_size]
+            assert(
+                len(strided_ranks) == xcd_model_parallel_size
+            ), 'check TP and XCD ranks.'
+            group = torch.distributed.new_group(
+                strided_ranks, timeout=timeout, pg_options=get_nccl_options('tp', nccl_comm_cfgs)
+            )
+            if rank in strided_ranks:
+                _XCD_INTER_GPU_PARALLEL_GROUP = group
+                _XCD_INTER_GPU_PARALLEL_GLOBAL_RANKS = strided_ranks
+
+    
     # Build the pipeline model-parallel groups and embedding groups
     # (first and last rank in each pipeline model-parallel group).
     global _PIPELINE_MODEL_PARALLEL_GROUP
@@ -1019,7 +1085,8 @@ def is_unitialized() -> bool:
 def model_parallel_is_initialized():
     """Check if model- and data-parallel groups are initialized."""
     if (
-        _TENSOR_MODEL_PARALLEL_GROUP is None
+        _XCD_INTRA_GPU_PARALLEL_GROUP is None 
+        or _TENSOR_MODEL_PARALLEL_GROUP is None
         or _PIPELINE_MODEL_PARALLEL_GROUP is None
         or _DATA_PARALLEL_GROUP is None
     ):
@@ -1031,6 +1098,24 @@ def get_model_parallel_group():
     """Get the model-parallel group the caller rank belongs to."""
     assert _MODEL_PARALLEL_GROUP is not None, 'model parallel group is not initialized'
     return _MODEL_PARALLEL_GROUP
+
+
+def get_xcd_intra_gpu_parallel_group(check_intialized=True):
+    """Get the intra-gpu xcd parallel group the caller rank belongs to."""
+    if check_intialized:
+        assert(
+            _XCD_INTRA_GPU_PARALLEL_GROUP is not None
+        ), 'xcd intra-gpu parallel group is not initialized'
+        return _XCD_INTRA_GPU_PARALLEL_GROUP
+
+
+def get_xcd_inter_gpu_parallel_group(check_initialized=True):
+    """get the inter-gpu xcd parallel group the caller rank belongs to."""
+    if check_initialized:
+        assert(
+            _XCD_INTER_GPU_PARALLEL_GROUP is not None
+        ), 'xcd inter-gpu parallel group is not initialized'
+        return _XCD_INTER_GPU_PARALLEL_GROUP
 
 
 def get_tensor_model_parallel_group(check_initialized=True):
@@ -1176,6 +1261,14 @@ def get_tensor_and_context_parallel_group():
     ), 'tensor and context parallel group is not initialized'
     return _TENSOR_AND_CONTEXT_PARALLEL_GROUP
 
+# utility provided for consistency.
+def set_xcd_parallel_group_world_size(world_size):
+    """Set the XCD parallel world size.
+    Total size remains the same for Inter- and Intra-GPU xcd group.
+    """
+    global _XCD_PARALLEL_WORLD_SIZE 
+    _XCD_PARALLEL_WORLD_SIZE = world_size
+
 
 def set_tensor_model_parallel_world_size(world_size):
     """Set the tensor-model-parallel size"""
@@ -1193,6 +1286,22 @@ def set_virtual_pipeline_model_parallel_world_size(world_size):
     """Set the pipeline-model-parallel size"""
     global _VIRTUAL_PIPELINE_MODEL_PARALLEL_WORLD_SIZE
     _VIRTUAL_PIPELINE_MODEL_PARALLEL_WORLD_SIZE = world_size
+
+
+def get_xcd_intra_gpu_parallel_world_size():
+    """Return the world size for intra-gpu xcd parallel group."""
+    global _XCD_INTRA_GPU_PARALLEL_WORLD_SIZE
+    if _XCD_INTRA_GPU_PARALLEL_WORLD_SIZE is not None:
+        return _XCD_INTRA_GPU_PARALLEL_WORLD_SIZE
+    return torch.distributed.get_world_size(group=get_xcd_intra_gpu_parallel_group())
+
+
+def get_xcd_inter_gpu_parallel_world_size():
+    """Return the world size for inter-gpu xcd parallel group."""
+    global _XCD_INTER_GPU_PARALLEL_WORLD_SIZE
+    if _XCD_INTER_GPU_PARALLEL_WORLD_SIZE is not None:
+        return _XCD_INTER_GPU_PARALLEL_WORLD_SIZE
+    return torch.distributed.get_world_size(group=get_xcd_inter_gpu_parallel_group())
 
 
 def get_tensor_model_parallel_world_size():
@@ -1221,6 +1330,19 @@ def get_pipeline_model_parallel_world_size():
         return torch.distributed.get_world_size(group=pp_group)
 
 
+def set_xcd_intra_gpu_parallel_rank(rank):
+    """Set intra-gpu xcd rank."""
+    # set this on the fly - ideally we shouldn't touch this.
+    global _XCD_INTRA_GPU_PARALLEL_RANK
+    _XCD_INTRA_GPU_PARALLEL_RANK = rank
+
+
+def set_xcd_inter_gpu_parallel_rank(rank):
+    """Set inter-gpu xcd rank"""
+    global _XCD_INTER_GPU_PARALLEL_RANK
+    _XCD_INTER_GPU_PARALLEL_RANK = rank
+
+
 def set_tensor_model_parallel_rank(rank):
     """Set tensor-model-parallel rank."""
     global _MPU_TENSOR_MODEL_PARALLEL_RANK
@@ -1237,6 +1359,24 @@ def set_pipeline_model_parallel_split_rank(rank):
     """Set pipeline-model-parallel split rank. DEPRECATED."""
     global _PIPELINE_MODEL_PARALLEL_SPLIT_RANK
     _PIPELINE_MODEL_PARALLEL_SPLIT_RANK = rank
+
+
+# imp. utility - replicate for xcd model parallel.
+# intra and inter
+def get_xcd_intra_gpu_parallel_rank():
+    """Returns caller's rank in the intra-gpu xcd group."""
+    global _XCD_INTRA_GPU_PARALLEL_RANK 
+    if _XCD_INTRA_GPU_PARALLEL_RANK is not None:
+        return _XCD_INTRA_GPU_PARALLEL_RANK
+    return torch.distributed.get_rank(group=get_xcd_intra_gpu_parallel_group())
+
+
+def get_xcd_inter_gpu_parallel_rank():
+    """Returns caller's rank in the inter-gpu xcd group."""
+    global _XCD_INTER_GPU_PARALLEL_RANK
+    if _XCD_INTER_GPU_PARALLEL_RANK is not None:
+        return _XCD_INTER_GPU_PARALLEL_RANK
+    return torch.distributed.get_rank(group=get_xcd_inter_gpu_parallel_group())
 
 
 def get_tensor_model_parallel_rank():
@@ -1422,6 +1562,24 @@ def get_virtual_pipeline_model_parallel_world_size():
     """Return the virtual pipeline-parallel world size."""
     global _VIRTUAL_PIPELINE_MODEL_PARALLEL_WORLD_SIZE
     return _VIRTUAL_PIPELINE_MODEL_PARALLEL_WORLD_SIZE
+
+
+def get_xcd_intra_gpu_parallel_src_rank():
+    """Calculate the global rank corresponding to the first local rank
+    in the intra-gpu xcd group."""
+    assert(
+        _XCD_INTRA_GPU_PARALLEL_GLOBAL_RANKS is not None
+    ), "Intra-gpu XCD parallel group is not initialized."
+    return _XCD_INTRA_GPU_PARALLEL_GLOBAL_RANKS[0]
+
+
+def get_xcd_inter_gpu_parallel_src_rank():
+    """Calculate the global rank corresponding to the first local rank
+    in the inter-gpu xcd group."""
+    assert(
+        _XCD_INTER_GPU_PARALLEL_GLOBAL_RANKS is not None
+    ), "Inter-gpu XCD parallel group is not initialized."
+    return _XCD_INTER_GPU_PARALLEL_GLOBAL_RANKS[0]
 
 
 def get_tensor_model_parallel_src_rank():
@@ -1759,6 +1917,8 @@ def get_all_ranks():
     """Get caller's rank in tensor-model-parallel, data-parallel, context-parallel,
     pipeline-model-parallel and expert-model-parallel groups."""
     ranks = [
+        get_xcd_intra_gpu_parallel_rank(),
+        get_xcd_inter_gpu_parallel_rank(),
         get_tensor_model_parallel_rank(),
         get_data_parallel_rank(),
         get_context_parallel_rank(),
@@ -1778,6 +1938,12 @@ def destroy_model_parallel():
     """Set the groups to none."""
     global _MODEL_PARALLEL_GROUP
     _MODEL_PARALLEL_GROUP = None
+
+    global _XCD_INTRA_GPU_PARALLEL_GROUP
+    _XCD_INTRA_GPU_PARALLEL_GROUP = None
+
+    global _XCD_INTER_GPU_PARALLEL_GROUP
+    _XCD_INTER_GPU_PARALLEL_GROUP = None
 
     global _TENSOR_MODEL_PARALLEL_GROUP
     _TENSOR_MODEL_PARALLEL_GROUP = None
@@ -1821,12 +1987,21 @@ def destroy_model_parallel():
     global _VIRTUAL_PIPELINE_MODEL_PARALLEL_WORLD_SIZE
     _VIRTUAL_PIPELINE_MODEL_PARALLEL_WORLD_SIZE = None
 
+    global _XCD_PARALLEL_WORLD_SIZE
+    _XCD_PARALLEL_WORLD_SIZE = None
+
     global _MPU_TENSOR_MODEL_PARALLEL_WORLD_SIZE
     _MPU_TENSOR_MODEL_PARALLEL_WORLD_SIZE = None
 
     global _MPU_PIPELINE_MODEL_PARALLEL_WORLD_SIZE
     _MPU_PIPELINE_MODEL_PARALLEL_WORLD_SIZE = None
 
+    global _XCD_INTRA_GPU_PARALLEL_RANK
+    _XCD_INTRA_GPU_PARALLEL_RANK = None
+
+    global _XCD_INTER_GPU_PARALLEL_RANK
+    _XCD_INTER_GPU_PARALLEL_RANK = None
+    
     global _MPU_TENSOR_MODEL_PARALLEL_RANK
     _MPU_TENSOR_MODEL_PARALLEL_RANK = None
 
