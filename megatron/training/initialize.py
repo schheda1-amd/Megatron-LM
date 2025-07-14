@@ -301,6 +301,7 @@ def _initialize_distributed(get_embedding_ranks, get_position_embedding_ranks):
             print("model parallel is already initialized")
         else:
             mpu.initialize_model_parallel(
+                args.xcd_model_parallel_size,
                 args.tensor_model_parallel_size,
                 args.pipeline_model_parallel_size,
                 args.virtual_pipeline_model_parallel_size,

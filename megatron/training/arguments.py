@@ -1737,6 +1737,8 @@ def _add_distributed_args(parser):
 
     group.add_argument('--tensor-model-parallel-size', type=int, default=1,
                        help='Degree of tensor model parallelism.')
+    group.add_argument('--xcd-model-parallel-size', type=int, default=1, 
+                       help='Degree of xcd model parallelism per gpu.')
     group.add_argument('--encoder-tensor-model-parallel-size', type=int, default=0,
                        help='Degree of tensor model parallelism for the encoder.')
     group.add_argument('--pipeline-model-parallel-size', type=int, default=1,
