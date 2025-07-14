@@ -882,7 +882,7 @@ def initialize_model_parallel(
 
     physical_gpu_limit = tensor_model_parallel_size // xcd_model_parallel_size    
     
-    # piggy back on whole tp group = #physical-gpu * #partitions
+    # piggy back on whole tp group = #physical-gpu * #partitions per gpu
     for ranks in generator_wrapper('tp'):
         for i in range(physical_gpu_limit):
             xcd_offset = i*xcd_model_parallel_size
@@ -911,7 +911,7 @@ def initialize_model_parallel(
             xcd_offset = i * xcd_model_parallel_size
             strided_ranks = ranks[xcd_offset::xcd_model_parallel_size]
             assert(
-                len(strided_ranks) == xcd_model_parallel_size
+                len(strided_ranks) == physical_gpu_limit 
             ), 'check TP and XCD ranks.'
             group = torch.distributed.new_group(
                 strided_ranks, timeout=timeout, pg_options=get_nccl_options('tp', nccl_comm_cfgs)
@@ -2001,7 +2001,7 @@ def destroy_model_parallel():
 
     global _XCD_INTER_GPU_PARALLEL_RANK
     _XCD_INTER_GPU_PARALLEL_RANK = None
-    
+
     global _MPU_TENSOR_MODEL_PARALLEL_RANK
     _MPU_TENSOR_MODEL_PARALLEL_RANK = None
 
