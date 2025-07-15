@@ -59,6 +59,7 @@ else
 fi
 
 MODEL_SIZE="${MODEL_SIZE:-70}"
+XCD="${XCD:-1}"
 TP="${TP:-8}"
 PP="${PP:-1}"
 CP="${CP:-1}"
@@ -136,6 +137,7 @@ NUM_GROUPS=$(( ${NUM_HEADS} / ${GROUP_SIZE} ))
 PROFILING_DIR="${LOG_DIR}/trace_${EXP_NAME}"
 
 GPT_ARGS="
+    --xcd-model-parallel-size ${XCD} \
     --tensor-model-parallel-size ${TP} \
     --pipeline-model-parallel-size ${PP} \
     --context-parallel-size ${CP} \

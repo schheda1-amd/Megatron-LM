@@ -304,3 +304,6 @@ if __name__ == "__main__":
         forward_step,
         args_defaults={'tokenizer_type': 'GPT2BPETokenizer'},
     )
+
+    torch.distributed.destroy_process_group()
+    print('exit pretraining')
