@@ -75,6 +75,7 @@ _MPU_TENSOR_MODEL_PARALLEL_RANK = None
 _MPU_PIPELINE_MODEL_PARALLEL_RANK = None
 _XCD_INTRA_GPU_PARALLEL_RANK = None
 _XCD_INTER_GPU_PARALLEL_RANK = None
+_XCD_PHYSICAL_GPU_RANK = None
 
 # A list of ranks that have a copy of the embedding.
 _EMBEDDING_GLOBAL_RANKS = None
@@ -1581,6 +1582,14 @@ def get_xcd_inter_gpu_parallel_src_rank():
     ), "Inter-gpu XCD parallel group is not initialized."
     return _XCD_INTER_GPU_PARALLEL_GLOBAL_RANKS[0]
 
+# tmp utility to identify which gpu the caller xcd belongs to.
+def get_physical_gpu_idx():
+    """Return caller's physical gpu identifier for
+    easier management"""
+    return (
+        get_tensor_model_parallel_rank() // 
+        get_xcd_intra_gpu_parallel_world_size()
+    )
 
 def get_tensor_model_parallel_src_rank():
     """Calculate the global rank corresponding to the first local rank
