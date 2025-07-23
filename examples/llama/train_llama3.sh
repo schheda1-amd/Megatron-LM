@@ -58,7 +58,7 @@ else
     echo "Single node setup, skipping NCCL and GLOO socket interface settings."
 fi
 
-MODEL_SIZE="${MODEL_SIZE:-70}"
+MODEL_SIZE="${MODEL_SIZE:-1}"
 XCD="${XCD:-1}"
 TP="${TP:-8}"
 PP="${PP:-1}"
@@ -126,7 +126,7 @@ elif [[ $MODEL_SIZE -eq 70 ]]; then
     NUM_LAYERS=80 # e.g. llama-13b: 40
     NUM_HEADS=64 # e.g. llama-13b: 40
     NUM_KV_HEADS=8 # llama3 70B uses GQA
-elif [[ $MODEL_SIZE -eq 1]]; then
+elif [[ $MODEL_SIZE -eq 1 ]]; then
     HIDDEN_SIZE=512
     FFN_HIDDEN_SIZE=1792 # 3.5* d_model
     NUM_LAYERS=1
