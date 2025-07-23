@@ -50,6 +50,10 @@ NNODES="${NNODES:-1}"
 NODE_RANK="${NODE_RANK:-0}"
 WORLD_SIZE=$(($GPUS_PER_NODE*$NNODES))
 
+if [ "${WORLD_SIZE}" -gt 1 ]; then
+    export OMP_NUM_THREADS=1 # disable warnings. tune to "x" workers
+fi
+
 if [ "${NNODES:-1}" -gt 1 ]; then
     export NCCL_SOCKET_IFNAME="${NCCL_SOCKET_IFNAME:-ens51np0}"
     export GLOO_SOCKET_IFNAME="${GLOO_SOCKET_IFNAME:-ens51np0}"

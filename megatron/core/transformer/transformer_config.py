@@ -453,7 +453,8 @@ class TransformerConfig(ModelParallelConfig):
             ) != 0:
             raise ValueError(
                 f"num_query_groups ({self.num_query_groups}) must be a multiple of "
-                f"tensor_model_parallel_size ({self.tensor_model_parallel_size})."
+                f"tensor_model_parallel_size ({self.tensor_model_parallel_size}) "
+                f"and xcd_model_parallel_size ({self.xcd_model_parallel_size})."
             )
 
         if self.apply_query_key_layer_scaling:
