@@ -68,7 +68,7 @@ BS="${BS:-8}"
 SEQ_LENGTH="${SEQ_LENGTH:-2048}"
 MAX_POSITION_EMBEDDINGS=131072
 TOTAL_ITERS="${TOTAL_ITERS:-12}"
-SEQ_PARALLEL="${SEQ_PARALLEL:-1}" 
+SEQ_PARALLEL="${SEQ_PARALLEL:-0}"  ## disable sequence parallel by default 
 CONTI_PARAMS="${CONTI_PARAMS:-0}"
 TE_FP8="${TE_FP8:-0}"  # 0: disable FP8, 1: enable FP8
 GEMM_TUNING="${GEMM_TUNING:-1}"
@@ -126,6 +126,12 @@ elif [[ $MODEL_SIZE -eq 70 ]]; then
     NUM_LAYERS=80 # e.g. llama-13b: 40
     NUM_HEADS=64 # e.g. llama-13b: 40
     NUM_KV_HEADS=8 # llama3 70B uses GQA
+elif [[ $MODEL_SIZE -eq 1]]; then
+    HIDDEN_SIZE=512
+    FFN_HIDDEN_SIZE=1792 # 3.5* d_model
+    NUM_LAYERS=1
+    NUM_HEADS=4
+    NUM_KV_HEADS=2
 else
     echo "Model size not supported."
     exit 1

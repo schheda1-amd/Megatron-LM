@@ -446,7 +446,11 @@ class TransformerConfig(ModelParallelConfig):
         if self.num_query_groups is None:
             self.num_query_groups = self.num_attention_heads
 
-        if self.num_query_groups % self.tensor_model_parallel_size != 0:
+        # needs to be updated for cpx mode where tp_size > num_query_groups;
+        # replace with #physical devices = (tp_size / xcd_size)
+        if (self.num_query_groups % 
+            (self.tensor_model_parallel_size / self.xcd_model_parallel_size)
+            ) != 0:
             raise ValueError(
                 f"num_query_groups ({self.num_query_groups}) must be a multiple of "
                 f"tensor_model_parallel_size ({self.tensor_model_parallel_size})."
