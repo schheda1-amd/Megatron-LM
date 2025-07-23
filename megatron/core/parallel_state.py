@@ -908,7 +908,7 @@ def initialize_model_parallel(
     # piggy back on whole tp group
     for ranks in generator_wrapper('tp'):
         #physical_gpu_limit = tensor_model_parallel_size // xcd_model_parallel_size
-        for i in range(physical_gpu_limit):
+        for i in range(xcd_model_parallel_size):
             xcd_offset = i * xcd_model_parallel_size
             strided_ranks = ranks[xcd_offset::xcd_model_parallel_size]
             assert(
