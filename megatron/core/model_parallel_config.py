@@ -360,6 +360,12 @@ class ModelParallelConfig:
                     "Intra-gpu parallelism is currently only supported with tensor parallelism."
                 )
             
+            if self.use_cpu_initialization:
+               raise ValueError(
+                  "weight init on CPU not supported with intra-gpu parallelism yet.\
+                  (TODO)"
+               )
+            
 
         if self.expert_tensor_parallel_size is None:
             self.expert_tensor_parallel_size = self.tensor_model_parallel_size

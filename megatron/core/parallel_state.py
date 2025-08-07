@@ -76,6 +76,7 @@ _MPU_PIPELINE_MODEL_PARALLEL_RANK = None
 _XCD_INTRA_GPU_PARALLEL_RANK = None
 _XCD_INTER_GPU_PARALLEL_RANK = None
 _XCD_PHYSICAL_GPU_RANK = None
+_PHYSICAL_GPU_WORLD_SIZE = None
 
 # A list of ranks that have a copy of the embedding.
 _EMBEDDING_GLOBAL_RANKS = None
@@ -909,14 +910,15 @@ def initialize_model_parallel(
     for ranks in generator_wrapper('tp'):
         #physical_gpu_limit = tensor_model_parallel_size // xcd_model_parallel_size
         for i in range(xcd_model_parallel_size):
-            xcd_offset = i * xcd_model_parallel_size
+            xcd_offset = i # * xcd_model_parallel_size
             strided_ranks = ranks[xcd_offset::xcd_model_parallel_size]
             assert(
                 len(strided_ranks) == physical_gpu_limit 
-            ), 'check TP and XCD ranks.'
+            ), f'check TP {tensor_model_parallel_size} and XCD {xcd_model_parallel_size} size.\
+            TP size should be perfectly divisible by intra-gpu partition size.'
             group = torch.distributed.new_group(
-                strided_ranks, timeout=timeout, pg_options=get_nccl_options('tp', nccl_comm_cfgs)
-            )
+                strided_ranks, timeout=timeout, pg_options=get_nccl_options('tp', nccl_comm_cfgs) 
+            ) # add xcd-level options for rccl, if we have any. 
             if rank in strided_ranks:
                 _XCD_INTER_GPU_PARALLEL_GROUP = group
                 _XCD_INTER_GPU_PARALLEL_GLOBAL_RANKS = strided_ranks
@@ -1271,6 +1273,14 @@ def set_xcd_parallel_group_world_size(world_size):
     _XCD_PARALLEL_WORLD_SIZE = world_size
 
 
+def set_physical_gpu_world_size():
+    """Set the physical gpu world size when AMD Instinct partitioning modes \
+     enabled."""
+    global _PHYSICAL_GPU_WORLD_SIZE
+    _PHYSICAL_GPU_WORLD_SIZE = (get_tensor_model_parallel_world_size() // \
+        get_xcd_intra_gpu_parallel_world_size())
+
+
 def set_tensor_model_parallel_world_size(world_size):
     """Set the tensor-model-parallel size"""
     global _MPU_TENSOR_MODEL_PARALLEL_WORLD_SIZE
@@ -1304,6 +1314,17 @@ def get_xcd_inter_gpu_parallel_world_size():
         return _XCD_INTER_GPU_PARALLEL_WORLD_SIZE
     return torch.distributed.get_world_size(group=get_xcd_inter_gpu_parallel_group())
 
+
+def get_physical_gpu_world_size():
+    """Return the world size of physical GPUs when AMD Instinct compute partitioning\
+     are enabled."""
+    global _PHYSICAL_GPU_WORLD_SIZE
+    if _PHYSICAL_GPU_WORLD_SIZE is not None:
+        return _PHYSICAL_GPU_WORLD_SIZE
+    return (
+        get_tensor_model_parallel_world_size() // 
+        get_xcd_intra_gpu_parallel_world_size()
+    )
 
 def get_tensor_model_parallel_world_size():
     """Return world size for the tensor-model-parallel group."""
