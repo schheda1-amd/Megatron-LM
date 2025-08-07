@@ -133,9 +133,15 @@ elif [[ $MODEL_SIZE -eq 70 ]]; then
 elif [[ $MODEL_SIZE -eq 1 ]]; then
     HIDDEN_SIZE=512
     FFN_HIDDEN_SIZE=1792 # 3.5* d_model
-    NUM_LAYERS=1
+    NUM_LAYERS=2
     NUM_HEADS=4
     NUM_KV_HEADS=2
+elif [[ $MODEL_SIZE -eq 2 ]]; then
+    HIDDEN_SIZE=4096
+    FFN_HIDDEN_SIZE=14336 # 3.5* d_model
+    NUM_LAYERS=2
+    NUM_HEADS=32
+    NUM_KV_HEADS=8
 else
     echo "Model size not supported."
     exit 1
