@@ -33,6 +33,7 @@ try:
         TENorm,
         TERowParallelLinear,
         TERowParallelLinear22,
+        TERowParallelLinear44,
         TELayerNormColumnParallelLinear22,
     )
 
@@ -81,13 +82,16 @@ def get_gpt_layer_with_transformer_engine_spec(
             'The fp8 argument in "get_gpt_layer_with_transformer_engine_spec" has been deprecated'
             ' and will be removed soon. Please update your code accordingly.'
         )
+    test_base = True
 
     mlp = _get_mlp_module_spec(
         use_te=True,
         num_experts=num_experts,
         moe_grouped_gemm=moe_grouped_gemm,
         moe_use_legacy_grouped_gemm=moe_use_legacy_grouped_gemm,
+        test_base=test_base,
     )
+
 
     if multi_latent_attention:
         return ModuleSpec(
@@ -123,8 +127,33 @@ def get_gpt_layer_with_transformer_engine_spec(
                 mlp_bda=get_bias_dropout_add,
             ),
         )
-    else:
+    elif test_base:
+        # TENorm significantly harms convergence when used
+        # for QKLayerNorm if TE Version < 1.9;
+        # we instead use the Apex implementation.
+        qk_norm = TENorm if is_te_min_version("1.9.0") else FusedLayerNorm
 
+        return ModuleSpec(
+            module=TransformerLayer,
+            submodules=TransformerLayerSubmodules(
+                self_attention=ModuleSpec(
+                    module=SelfAttention,
+                    params={"attn_mask_type": AttnMaskType.causal},
+                    submodules=SelfAttentionSubmodules(
+                        linear_qkv=TELayerNormColumnParallelLinear,
+                        core_attention=TEDotProductAttention,
+                        linear_proj=TERowParallelLinear,
+                        q_layernorm=qk_norm if qk_layernorm else IdentityOp,
+                        k_layernorm=qk_norm if qk_layernorm else IdentityOp,
+                    ),
+                ),
+                self_attn_bda=get_bias_dropout_add,
+                pre_mlp_layernorm=TENorm if num_experts else IdentityOp,
+                mlp=mlp,
+                mlp_bda=get_bias_dropout_add,
+            ),
+        )
+    else:
         # TENorm significantly harms convergence when used
         # for QKLayerNorm if TE Version < 1.9;
         # we instead use the Apex implementation.
@@ -247,6 +276,7 @@ def _get_mlp_module_spec(
     moe_grouped_gemm: Optional[bool] = False,
     fp8: Optional[str] = None,  # pylint: disable=unused-arguments
     moe_use_legacy_grouped_gemm: Optional[bool] = False,
+    test_base: Optional[bool] = True, # test
 ) -> ModuleSpec:
     """Helper function to get module spec for MLP/MoE"""
     if fp8 is not None:
@@ -257,13 +287,23 @@ def _get_mlp_module_spec(
 
     if num_experts is None:
         # Dense MLP w/ or w/o TE modules.
-        return ModuleSpec(
-            module=MLP,
-            submodules=MLPSubmodules(
-                linear_fc1=TELayerNormColumnParallelLinear22 if use_te else ColumnParallelLinear,
-                linear_fc2=TERowParallelLinear if use_te else RowParallelLinear,
-            ),
-        )
+        if test_base:
+            return ModuleSpec(
+                module=MLP,
+                submodules=MLPSubmodules(
+                    linear_fc1=TELayerNormColumnParallelLinear if use_te else ColumnParallelLinear,
+                    linear_fc2=TERowParallelLinear if use_te else RowParallelLinear,
+                ),
+            )
+        else:
+            return ModuleSpec(
+                module=MLP,
+                submodules=MLPSubmodules(
+                    linear_fc1=TELayerNormColumnParallelLinear22 if use_te else ColumnParallelLinear,
+                    linear_fc2=TERowParallelLinear44 if use_te else RowParallelLinear,
+                ),
+            )
+            
     else:
         # Mixture of experts with modules in megatron core.
         return get_moe_module_spec(
