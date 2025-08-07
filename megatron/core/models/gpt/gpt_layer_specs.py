@@ -32,6 +32,8 @@ try:
         TELinear,
         TENorm,
         TERowParallelLinear,
+        TERowParallelLinear22,
+        TELayerNormColumnParallelLinear22,
     )
 
     HAVE_TE = True
@@ -137,7 +139,7 @@ def get_gpt_layer_with_transformer_engine_spec(
                     submodules=SelfAttentionSubmodules(
                         linear_qkv=TELayerNormColumnParallelLinear,
                         core_attention=TEDotProductAttention,
-                        linear_proj=TERowParallelLinear,
+                        linear_proj=TERowParallelLinear22,
                         q_layernorm=qk_norm if qk_layernorm else IdentityOp,
                         k_layernorm=qk_norm if qk_layernorm else IdentityOp,
                     ),
@@ -258,7 +260,7 @@ def _get_mlp_module_spec(
         return ModuleSpec(
             module=MLP,
             submodules=MLPSubmodules(
-                linear_fc1=TELayerNormColumnParallelLinear if use_te else ColumnParallelLinear,
+                linear_fc1=TELayerNormColumnParallelLinear22 if use_te else ColumnParallelLinear,
                 linear_fc2=TERowParallelLinear if use_te else RowParallelLinear,
             ),
         )
