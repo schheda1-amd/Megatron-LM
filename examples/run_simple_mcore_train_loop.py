@@ -11,7 +11,7 @@ from megatron.core.pipeline_parallel.schedules import get_forward_backward_func
 from megatron.core.tensor_parallel.random import model_parallel_cuda_manual_seed
 from megatron.core.transformer.transformer_config import TransformerConfig
 from megatron.core.models.gpt.gpt_model import GPTModel
-from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_local_spec
+from megatron.core.models.gpt.gpt_layer_specs import get_gpt_layer_local_spec, get_gpt_layer_with_transformer_engine_spec
 from megatron.core.datasets.utils import compile_helpers 
 from megatron.core.datasets.blended_megatron_dataset_builder import BlendedMegatronDatasetBuilder
 from megatron.core.datasets.gpt_dataset import GPTDatasetConfig, MockGPTDataset
@@ -31,26 +31,33 @@ def initialize_distributed(tensor_model_parallel_size=1, pipeline_model_parallel
     torch.distributed.init_process_group(world_size=world_size, rank=rank)
 
     # Megatron core distributed training initialization
-    parallel_state.initialize_model_parallel(tensor_model_parallel_size, pipeline_model_parallel_size)
+    parallel_state.initialize_model_parallel(tensor_model_parallel_size = tensor_model_parallel_size,\
+            pipeline_model_parallel_size = pipeline_model_parallel_size)
 
 def model_provider():
     """Build the model."""
 
     transformer_config = TransformerConfig(
         num_layers=2, 
-        hidden_size=12, 
-        num_attention_heads=4, 
+        hidden_size=512, 
+        num_attention_heads=8, 
         use_cpu_initialization=True, 
         pipeline_dtype=torch.float32,
     )
 
+    #gpt_model = GPTModel(
+    #    config=transformer_config, 
+    #    transformer_layer_spec=get_gpt_layer_local_spec(), 
+    #    vocab_size=100, 
+    #    max_sequence_length=_SEQUENCE_LENGTH,
+    #)
+
     gpt_model = GPTModel(
         config=transformer_config, 
-        transformer_layer_spec=get_gpt_layer_local_spec(), 
+        transformer_layer_spec=get_gpt_layer_with_transformer_engine_spec(), 
         vocab_size=100, 
         max_sequence_length=_SEQUENCE_LENGTH,
     )
-
     return gpt_model
 
 def get_train_data_iterator():
@@ -115,12 +122,18 @@ def load_distributed_checkpoint(checkpoint_path, gpt_model):
     return gpt_model
 
 if __name__ == "__main__":
-    initialize_distributed(tensor_model_parallel_size=2, pipeline_model_parallel_size=1)
+    tp = int(os.environ['TP'])
+    initialize_distributed(tensor_model_parallel_size=tp, pipeline_model_parallel_size=1)
     model_parallel_cuda_manual_seed(123)
 
     gpt_model = model_provider()
     device = torch.device("cuda")
     gpt_model.to(device)
+    
+    if torch.distributed.get_rank() == 0:
+        print(gpt_model)
+        for name, param in gpt_model.named_parameters():
+            print(name, param.shape)
 
     optim = Adam(gpt_model.parameters())
 
@@ -147,12 +160,13 @@ if __name__ == "__main__":
         print(f'Losses reduced :  {losses_reduced}')
 
     # Saving the model
-    ckpt_path = os.getcwd() + '/ckpt'
-    Path(ckpt_path).mkdir(exist_ok=True)
-    save_distributed_checkpoint(gpt_model=gpt_model, checkpoint_path=ckpt_path)
+    #ckpt_path = os.getcwd() + '/ckpt'
+    #Path(ckpt_path).mkdir(exist_ok=True)
+    #save_distributed_checkpoint(gpt_model=gpt_model, checkpoint_path=ckpt_path)
 
     # Loading the model
-    gpt_model = load_distributed_checkpoint(gpt_model=gpt_model, checkpoint_path=ckpt_path)
-    gpt_model.to(device)
-    print('Successfully loaded the model')
+    #gpt_model = load_distributed_checkpoint(gpt_model=gpt_model, checkpoint_path=ckpt_path)
+    #gpt_model.to(device)
+    torch.distributed.destroy_process_group()
+    print('Finished training')
 
