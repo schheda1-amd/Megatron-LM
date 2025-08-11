@@ -511,6 +511,7 @@ def pretrain(
         iteration = args.iteration
 
     if args.do_valid:
+        print('===============================cpxcpxpxpcpcp===================================')
         prefix = f'iteration {iteration} on validation set'
         evaluate_and_print_results(prefix, forward_step_func,
                                    valid_data_iterator, model,
@@ -1725,7 +1726,19 @@ def evaluate(forward_step_func,
     """Evaluation."""
     args = get_args()
     timers = get_timers()
-
+    if args.profile and torch.distributed.get_rank() in args.profile_ranks and args.use_pytorch_profiler and args.skip_train:
+        prof = torch.profiler.profile(
+        activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
+        schedule=torch.profiler.schedule(
+            wait=max(args.profile_step_start-1, 0),
+            warmup=1 if args.profile_step_start > 0 else 0,
+            active=args.profile_step_end-args.profile_step_start,
+            repeat=1),
+        on_trace_ready=torch.profiler.tensorboard_trace_handler(args.tensorboard_dir),
+        record_shapes=True,
+        profile_memory=True,
+        with_stack=True)
+        prof.start()
     timers('evaluate', log_level=0).start(barrier=True)
 
     if args.vision_pretraining and args.vision_pretraining_type == "dino":
@@ -1753,6 +1766,12 @@ def evaluate(forward_step_func,
         if verbose:
             print_rank_0(f'Evaluating on {args.eval_iters * eval_batch_size} samples')
         while iteration < args.eval_iters:
+            if args.profile and torch.distributed.get_rank() in args.profile_ranks and iteration > 1:
+                if args.use_pytorch_profiler:
+                    prof.step()
+                elif iteration == args.profile_step_start:
+                    torch.cuda.cudart().cudaProfilerStart()
+                    torch.autograd.profiler.emit_nvtx(record_shapes=True).__enter__()
             iteration += 1
             if verbose:
                 print_rank_0(f'Evaluating iter {iteration}/{args.eval_iters}')
@@ -1790,7 +1809,13 @@ def evaluate(forward_step_func,
                             total_loss_dict[key][1] += 1
 
             args.consumed_valid_samples += eval_batch_size
-
+            if args.profile and \
+                iteration == 5 and \
+                torch.distributed.get_rank() in args.profile_ranks:
+                if args.use_pytorch_profiler:
+                    assert prof is not None
+                    prof.stop()
+            
             if args.exit_duration_in_mins:
                 train_time = (time.time() - _TRAIN_START_TIME) / 60.0
                 done_cuda = torch.tensor(

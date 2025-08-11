@@ -137,10 +137,10 @@ elif [[ $MODEL_SIZE -eq 1 ]]; then
     NUM_HEADS=4
     NUM_KV_HEADS=2
 elif [[ $MODEL_SIZE -eq 2 ]]; then
-    HIDDEN_SIZE=4096
-    FFN_HIDDEN_SIZE=14336 # 3.5* d_model
+    HIDDEN_SIZE=2048
+    FFN_HIDDEN_SIZE=8192 # 3.5* d_model
     NUM_LAYERS=2
-    NUM_HEADS=32
+    NUM_HEADS=16
     NUM_KV_HEADS=8
 else
     echo "Model size not supported."
@@ -215,7 +215,8 @@ DATA_ARGS="
     --tensorboard-dir $LOG_DIR \
     --log-interval 1 \
     --eval-interval 320000 \
-    --eval-iters 10 \
+    --skip-train \
+    --eval-iters 20 \
     --num-workers $ds_works \
 "
 if [ -z ${DATA_PATH+x} ]; then

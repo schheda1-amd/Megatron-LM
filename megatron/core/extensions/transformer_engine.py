@@ -281,8 +281,6 @@ class TELinear22(te.pytorch.Linear22):
     parallel_mode currently supports 3 different values:
         - "column": Split the weight matrix along output dimension (used in TEColumnParallelLinear)
         - "row": Split the weight matrix along input dimension (used in TERowParallelLinear)
-        - "bumblebee": Custom split over TP under GPU partitioning of Instinct devices.
-        - "starscream": Custom split over TP under GPU partitioning of Instinct devices.
         - "duplicated": No tensor parallelism and weight is duplicated across TP ranks
         - Note: For expert linear layers, we will disable communication logic here
                 as TP communication is handled in token_dispatcher.
@@ -367,7 +365,6 @@ class TELinear22(te.pytorch.Linear22):
         if is_te_min_version("1.7.0"):
             extra_kwargs["rng_tracker_name"] = rng_tracker_name
 
-        physical_gpu_offset = None
         te_parallel_mode = parallel_mode
         if parallel_mode == "duplicated":
             # Handle non-parallel case
@@ -381,19 +378,9 @@ class TELinear22(te.pytorch.Linear22):
             if is_expert:
                 tp_group = get_expert_tensor_parallel_group(check_initialized=False)
                 tp_size = get_expert_tensor_parallel_world_size()
-            else: 
+            else:
                 tp_group = get_tensor_model_parallel_group(check_initialized=False)
                 tp_size = get_tensor_model_parallel_world_size()
-                #if False: # disable for now.
-                if self.config.xcd_model_parallel_size <= 1:
-                    extra_kwargs["xcd_group"] = None
-                    extra_kwargs["xcd_size"] = 1
-                    extra_kwargs["physical_gpu_offset"] = None
-                else: # gpu partitioned
-                    extra_kwargs["xcd_group"] = get_xcd_intra_gpu_parallel_group(check_initialized=False)
-                    extra_kwargs["xcd_size"] = get_xcd_intra_gpu_parallel_world_size()
-                    extra_kwargs["physical_gpu_offset"] = get_physical_gpu_idx() #whereami               
-
             explicit_expert_comm = is_expert and (tp_size > 1 or self.expert_parallel)
             if explicit_expert_comm:
                 if parallel_mode == "column":
@@ -572,10 +559,10 @@ class TELinear44(te.pytorch.Linear44):
                     extra_kwargs["inter_xcd_group"] = None # can be same as tp group
                     extra_kwargs["inter_xcd_size"] = 1
                 else: # gpu partitioned
-                    extra_kwargs["intra_xcd_group"] = get_xcd_intra_gpu_parallel_group(check_initialized=False)
+                    extra_kwargs["intra_xcd_group"] = get_xcd_intra_gpu_parallel_group()
                     extra_kwargs["intra_xcd_size"] = get_xcd_intra_gpu_parallel_world_size()
                     extra_kwargs["physical_gpu_offset"] = get_physical_gpu_idx() #whereami
-                    extra_kwargs["inter_xcd_group"] = get_xcd_inter_gpu_parallel_group(check_initialized=False)
+                    extra_kwargs["inter_xcd_group"] = get_xcd_inter_gpu_parallel_group()
                     extra_kwargs["inter_xcd_size"] = get_xcd_inter_gpu_parallel_world_size()
 
             explicit_expert_comm = is_expert and (tp_size > 1 or self.expert_parallel)
@@ -883,8 +870,8 @@ class TELayerNormColumnParallelLinear22(te.pytorch.LayerNormLinear22):
                     extra_kwargs["ub_name"] = tp_comm_buffer_name
 
         if parallel_mode == "bumblebee":
-            extra_kwargs["xcd_group"] = get_xcd_intra_gpu_parallel_group(check_initialized=False)
-            extra_kwards["xcd_size"] = get_xcd_inter_gpu_parallel_world_size()
+            extra_kwargs["xcd_group"] = get_xcd_intra_gpu_parallel_group()
+            extra_kwargs["xcd_size"] = get_xcd_inter_gpu_parallel_world_size()
             extra_kwargs["physical_gpu_offset"] = get_physical_gpu_idx()
         else:
             extra_kwargs["xcd_group"] = None
@@ -1151,7 +1138,7 @@ class TERowParallelLinear22(TELinear22):
         super().__init__(
             input_size=input_size,
             output_size=output_size,
-            parallel_mode="bumblebee",
+            parallel_mode="row",
             config=config,
             init_method=(
                 condition_init_method(config, init_method)
