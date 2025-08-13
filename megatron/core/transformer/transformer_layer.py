@@ -15,6 +15,7 @@ from megatron.core.transformer.identity_op import IdentityFuncOp, IdentityOp
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_config import TransformerConfig
+from megatron.core.transformer.dummy_layer import DummyLayer
 from megatron.core.utils import make_viewless_tensor
 
 
@@ -53,6 +54,8 @@ class TransformerLayerSubmodules:
     pre_cross_attn_layernorm: Union[ModuleSpec, type] = IdentityOp
     cross_attention: Union[ModuleSpec, type] = IdentityOp
     cross_attn_bda: Union[ModuleSpec, type] = IdentityFuncOp
+
+    dummy_layer: Union[ModuleSpec, type] = IdentityOp
 
     pre_mlp_layernorm: Union[ModuleSpec, type] = IdentityOp
     mlp: Union[ModuleSpec, type] = IdentityOp
@@ -150,6 +153,8 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
 
         # [Module 6: BiasDropoutFusion]
         self.cross_attn_bda = build_module(submodules.cross_attn_bda, config=self.config)
+
+        self.dummy_layer = DummyLayer()
 
         # [Module 7: Pre MLP] Optional Layernorm before MLP
         self.pre_mlp_layernorm = build_module(
@@ -344,8 +349,9 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         # Residual connection.
         residual = hidden_states
 
+        dummy_op = self.dummy_layer(hidden_states)
         # Optional Layer norm post the cross-attention.
-        pre_mlp_layernorm_output = self.pre_mlp_layernorm(hidden_states)
+        pre_mlp_layernorm_output = self.pre_mlp_layernorm(dummy_op)
 
         # MLP.
         mlp_output_with_bias = self.mlp(pre_mlp_layernorm_output)
