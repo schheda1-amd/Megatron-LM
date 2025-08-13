@@ -7,7 +7,7 @@ from megatron.core.fusions.fused_bias_dropout import get_bias_dropout_add
 from megatron.core.models.gpt.moe_module_specs import get_moe_module_spec
 from megatron.core.tensor_parallel.layers import ColumnParallelLinear, RowParallelLinear
 from megatron.core.transformer.attention import SelfAttention, SelfAttentionSubmodules
-from megatron.core.transformer.dummy_layer import DummyLayer
+from megatron.core.transformer.dummy_layer import DummyLayer, DummyLayer2
 from megatron.core.transformer.dot_product_attention import DotProductAttention
 from megatron.core.transformer.enums import AttnMaskType
 from megatron.core.transformer.identity_op import IdentityOp
@@ -152,6 +152,7 @@ def get_gpt_layer_with_transformer_engine_spec(
                 dummy_layer=DummyLayer,
                 pre_mlp_layernorm=TENorm if num_experts else IdentityOp,
                 mlp=mlp,
+                dummy_layer2=DummyLayer2,
                 mlp_bda=get_bias_dropout_add,
             ),
         )
@@ -179,6 +180,7 @@ def get_gpt_layer_with_transformer_engine_spec(
                 dummy_layer=DummyLayer,
                 pre_mlp_layernorm=TENorm if num_experts else IdentityOp,
                 mlp=mlp,
+                dummy_layer2=DummyLayer2,
                 mlp_bda=get_bias_dropout_add,
             ),
         )

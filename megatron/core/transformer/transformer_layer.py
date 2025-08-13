@@ -15,7 +15,7 @@ from megatron.core.transformer.identity_op import IdentityFuncOp, IdentityOp
 from megatron.core.transformer.module import MegatronModule
 from megatron.core.transformer.spec_utils import ModuleSpec, build_module
 from megatron.core.transformer.transformer_config import TransformerConfig
-from megatron.core.transformer.dummy_layer import DummyLayer
+from megatron.core.transformer.dummy_layer import DummyLayer, DummyLayer2
 from megatron.core.utils import make_viewless_tensor
 
 
@@ -56,6 +56,7 @@ class TransformerLayerSubmodules:
     cross_attn_bda: Union[ModuleSpec, type] = IdentityFuncOp
 
     dummy_layer: Union[ModuleSpec, type] = IdentityOp
+    dummy_layer2: Union[ModuleSpec, type] = IdentityOp
 
     pre_mlp_layernorm: Union[ModuleSpec, type] = IdentityOp
     mlp: Union[ModuleSpec, type] = IdentityOp
@@ -168,6 +169,7 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         if hasattr(self.mlp, 'set_layer_number'):
             self.mlp.set_layer_number(self.layer_number)
 
+        self.dummy_layer2 = DummyLayer2()
         # [Module 9: BiasDropoutFusion]
         self.mlp_bda = build_module(submodules.mlp_bda)
 
@@ -356,11 +358,13 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         # MLP.
         mlp_output_with_bias = self.mlp(pre_mlp_layernorm_output)
 
+        dummy_op2 = self.dummy_layer2(mlp_output_with_bias)
+
         # TODO: could we move `bias_dropout_add_exec_handler` itself
         # inside the module provided in the `bias_dropout_add_spec` module?
         with self.bias_dropout_add_exec_handler():
             hidden_states = self.mlp_bda(self.training, self.config.bias_dropout_fusion)(
-                mlp_output_with_bias, residual, self.hidden_dropout
+                dummy_op2, residual, self.hidden_dropout
             )
 
         # Jit compiled function creates 'view' tensor. This tensor
