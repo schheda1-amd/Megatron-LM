@@ -127,9 +127,9 @@ if [[ $MODEL_SIZE -eq 8 ]]; then #llama3.1-8B
 elif [[ $MODEL_SIZE -eq 70 ]]; then
     HIDDEN_SIZE=8192 # e.g. llama-13b: 5120
     FFN_HIDDEN_SIZE=28672 # e.g. llama-13b: 13824
-    NUM_LAYERS=80 # e.g. llama-13b: 40
+    NUM_LAYERS=2 # e.g. llama-13b: 40
     NUM_HEADS=64 # e.g. llama-13b: 40
-    NUM_KV_HEADS=8 # llama3 70B uses GQA
+    NUM_KV_HEADS=32 # llama3 70B uses GQA
 elif [[ $MODEL_SIZE -eq 1 ]]; then
     HIDDEN_SIZE=512
     FFN_HIDDEN_SIZE=1792 # 3.5* d_model
@@ -216,7 +216,7 @@ DATA_ARGS="
     --log-interval 1 \
     --eval-interval 320000 \
     --skip-train \
-    --eval-iters 20 \
+    --eval-iters $EVAL_ITERS \
     --num-workers $ds_works \
 "
 if [ -z ${DATA_PATH+x} ]; then

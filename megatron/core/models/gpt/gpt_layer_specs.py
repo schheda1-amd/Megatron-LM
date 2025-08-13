@@ -82,7 +82,7 @@ def get_gpt_layer_with_transformer_engine_spec(
             'The fp8 argument in "get_gpt_layer_with_transformer_engine_spec" has been deprecated'
             ' and will be removed soon. Please update your code accordingly.'
         )
-    test_base = False
+    test_base = True
 
     mlp = _get_mlp_module_spec(
         use_te=True,
@@ -292,7 +292,7 @@ def _get_mlp_module_spec(
                 module=MLP,
                 submodules=MLPSubmodules(
                     linear_fc1=TELayerNormColumnParallelLinear if use_te else ColumnParallelLinear,
-                    linear_fc2=TERowParallelLinear22 if use_te else RowParallelLinear,
+                    linear_fc2=TERowParallelLinear if use_te else RowParallelLinear,
                 ),
             )
         else:

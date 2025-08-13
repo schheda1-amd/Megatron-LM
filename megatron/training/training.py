@@ -1729,11 +1729,6 @@ def evaluate(forward_step_func,
     if args.profile and torch.distributed.get_rank() in args.profile_ranks and args.use_pytorch_profiler and args.skip_train:
         prof = torch.profiler.profile(
         activities=[torch.profiler.ProfilerActivity.CPU, torch.profiler.ProfilerActivity.CUDA],
-        schedule=torch.profiler.schedule(
-            wait=max(args.profile_step_start-1, 0),
-            warmup=1 if args.profile_step_start > 0 else 0,
-            active=args.profile_step_end-args.profile_step_start,
-            repeat=1),
         on_trace_ready=torch.profiler.tensorboard_trace_handler(args.tensorboard_dir),
         record_shapes=True,
         profile_memory=True,
@@ -1766,7 +1761,7 @@ def evaluate(forward_step_func,
         if verbose:
             print_rank_0(f'Evaluating on {args.eval_iters * eval_batch_size} samples')
         while iteration < args.eval_iters:
-            if args.profile and torch.distributed.get_rank() in args.profile_ranks and iteration > 1:
+            if args.profile and torch.distributed.get_rank() in args.profile_ranks and iteration > 1 and iteration < 5:
                 if args.use_pytorch_profiler:
                     prof.step()
                 elif iteration == args.profile_step_start:
