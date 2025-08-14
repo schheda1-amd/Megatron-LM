@@ -351,20 +351,20 @@ class TransformerLayer(MegatronModule, BaseTransformerLayer):
         # Residual connection.
         residual = hidden_states
 
-        dummy_op = self.dummy_layer(hidden_states)
+        #dummy_op = self.dummy_layer(hidden_states)
         # Optional Layer norm post the cross-attention.
-        pre_mlp_layernorm_output = self.pre_mlp_layernorm(dummy_op)
+        pre_mlp_layernorm_output = self.pre_mlp_layernorm(hidden_states)
 
         # MLP.
         mlp_output_with_bias = self.mlp(pre_mlp_layernorm_output)
 
-        dummy_op2 = self.dummy_layer2(mlp_output_with_bias)
+        #dummy_op2 = self.dummy_layer2(mlp_output_with_bias)
 
         # TODO: could we move `bias_dropout_add_exec_handler` itself
         # inside the module provided in the `bias_dropout_add_spec` module?
         with self.bias_dropout_add_exec_handler():
             hidden_states = self.mlp_bda(self.training, self.config.bias_dropout_fusion)(
-                dummy_op2, residual, self.hidden_dropout
+                mlp_output_with_bias, residual, self.hidden_dropout
             )
 
         # Jit compiled function creates 'view' tensor. This tensor

@@ -1761,7 +1761,7 @@ def evaluate(forward_step_func,
         if verbose:
             print_rank_0(f'Evaluating on {args.eval_iters * eval_batch_size} samples')
         while iteration < args.eval_iters:
-            if args.profile and torch.distributed.get_rank() in args.profile_ranks and iteration > 1 and iteration < 5:
+            if args.profile and torch.distributed.get_rank() in args.profile_ranks and iteration > 3 and iteration < 6:
                 if args.use_pytorch_profiler:
                     prof.step()
                 elif iteration == args.profile_step_start:
@@ -1805,7 +1805,7 @@ def evaluate(forward_step_func,
 
             args.consumed_valid_samples += eval_batch_size
             if args.profile and \
-                iteration == 5 and \
+                iteration == 6 and \
                 torch.distributed.get_rank() in args.profile_ranks:
                 if args.use_pytorch_profiler:
                     assert prof is not None

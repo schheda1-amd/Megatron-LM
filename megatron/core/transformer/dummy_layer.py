@@ -134,11 +134,14 @@ class DummyLayer(nn.Module):
 class _DummyInpManipulation2(torch.autograd.Function):
     """Dummy operator that will gather the outputs in forward and scatter in backward.
     This should be addressed by a gather_along_first_dim in the RowParallelLinear's forward pass.
+    param_list and bucket_group to identify which params are None for that rank in the xcd group
+    after we split grad_output -- to manage any issues with m-core/ddp wrapper that manages 
+    param gather and reduction overlap in fwd/bwd passes respectively. 
     """
 
     @staticmethod
     @custom_fwd
-    def forward(ctx, input_,):
+    def forward(ctx, input_, param_list=None, bucket_group=None):
         """Forward with frozen weight."""
         xcd_group = parallel_state.get_xcd_intra_gpu_parallel_group()
         xcd_group_size = parallel_state.get_xcd_intra_gpu_parallel_world_size()
@@ -161,6 +164,9 @@ class _DummyInpManipulation2(torch.autograd.Function):
         # output, _ = gather_along_first_dim(input_, xcd_group, False)
 
         ctx.xcd_group = xcd_group
+        ctx.xcd_rank = xcd_rank
+        ctx.param_list = param_list
+        ctx.bucket_group = bucket_group
         ctx.xcd_group_size = xcd_group_size
         # ctx.input_shape = input_.shape
 
@@ -170,18 +176,34 @@ class _DummyInpManipulation2(torch.autograd.Function):
     @custom_bwd
     def backward(ctx, grad_output):
         """Backward to reconstruct the full grad."""
-        xcd_group = ctx.xcd_group
+        #xcd_group = ctx.xcd_group
         xcd_group_size = ctx.xcd_group_size
         xcd_rank = parallel_state.get_xcd_intra_gpu_parallel_rank()
+        param_list = ctx.param_list
+        bucket_group = ctx.bucket_group
         # input_shape = ctx.input_shape
+
+        grad_inp, grad_bias = grad_output
+
+        grad_input_chunks = torch.chunk(grad_inp, xcd_group_size, dim=0)
+        grad_bias_chunks = (
+            torch.chunk(grad_bias, xcd_group_size, dim=0) if grad_bias is not None else None
+        )
         
-        output_chunks = torch.chunk(grad_output, xcd_group_size, dim=0)
-        output = input_chunks[xcd_rank].contiguous()
+        grad_input = (grad_input_chunks[xcd_rank].contiguous(), 
+                        grad_bias_chunks[xcd_rank].contiguous() if grad_bias_chunks is not None else None)
+
+        if param_list is not None and bucket_group is not None:
+            for i, param in enumerate(param_list):
+                if i != xcd_rank:
+                    bucket_group.register_grad_ready(param)
+        #output_chunks = torch.chunk(grad_output, xcd_group_size, dim=0)
+        #grad_input = output_chunks[xcd_rank].contiguous()
         #grad_chunks = [torch.zeros_like(grad_output) for _ in range(xcd_group_size)]
         #torch.distributed.all_gather(grad_chunks, grad_output, group=xcd_group)
-        grad_input = torch.cat(grad_chunks, dim=0)
+        # grad_input = torch.cat(grad_chunks, dim=0)
 
-        return grad_input
+        return grad_input, None, None
 
 
 class DummyLayer2(nn.Module):

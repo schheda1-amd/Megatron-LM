@@ -215,10 +215,10 @@ DATA_ARGS="
     --tensorboard-dir $LOG_DIR \
     --log-interval 1 \
     --eval-interval 320000 \
-    --skip-train \
     --eval-iters $EVAL_ITERS \
     --num-workers $ds_works \
 "
+# --skip-train if required
 if [ -z ${DATA_PATH+x} ]; then
     DATA_ARGS="$DATA_ARGS --mock-data"
     echo "Using Mock data"
@@ -272,8 +272,8 @@ EXTRA_ARGS="
     --no-gradient-accumulation-fusion \
     --distributed-backend nccl \
     --distributed-timeout-minutes 120 \
-    --overlap-grad-reduce \
 "
+# --overlap-grad-reduce
 
 if [ "$FSDP" -eq 1 ]; then
     EXTRA_ARGS="$EXTRA_ARGS --use-torch-fsdp2"
@@ -284,7 +284,7 @@ if [ "$FSDP" -eq 1 ]; then
     fi
 else
     if [ "$OPTIMIZER" == "adam" ]; then
-        EXTRA_ARGS="$EXTRA_ARGS --use-distributed-optimizer --overlap-param-gather"
+        EXTRA_ARGS="$EXTRA_ARGS --use-distributed-optimizer " # --overlap-param-gather
     fi
 fi
 

@@ -83,7 +83,7 @@ def get_gpt_layer_with_transformer_engine_spec(
             'The fp8 argument in "get_gpt_layer_with_transformer_engine_spec" has been deprecated'
             ' and will be removed soon. Please update your code accordingly.'
         )
-    test_base = False
+    test_base = True
 
     mlp = _get_mlp_module_spec(
         use_te=True,
@@ -149,10 +149,8 @@ def get_gpt_layer_with_transformer_engine_spec(
                     ),
                 ),
                 self_attn_bda=get_bias_dropout_add,
-                dummy_layer=DummyLayer,
                 pre_mlp_layernorm=TENorm if num_experts else IdentityOp,
                 mlp=mlp,
-                dummy_layer2=DummyLayer2,
                 mlp_bda=get_bias_dropout_add,
             ),
         )
